@@ -10,6 +10,8 @@ import { CardModel } from "./src/models/CardModel";
 import { ColonyModel } from "./src/models/ColonyModel";
 import { Color } from "./src/Color";
 import { Game, GameOptions } from "./src/Game";
+import { GameLogs } from "./src/routes/GameLogs";
+import { Route } from "./src/routes/Route";
 import { ICard } from "./src/cards/ICard";
 import { IProjectCard } from "./src/cards/IProjectCard";
 import { ISpace } from "./src/ISpace";
@@ -48,13 +50,15 @@ const serverId = generateRandomServerId();
 const styles = fs.readFileSync("styles.css");
 const games: Map<string, Game> = new Map<string, Game>();
 const playersToGame: Map<string, Game> = new Map<string, Game>();
+const route = new Route();
+const gameLogs = new GameLogs(playersToGame);
 
 function processRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (req.url !== undefined) {
         if (req.method === "GET") {
             if (req.url.replace(/\?.*$/, "").startsWith("/games-overview")) {
                 if (!isServerIdValid(req)) {
-                    notAuthorized(req, res);
+                    route.notAuthorized(req, res);
                     return;
                 } else {
                     serveApp(res);
@@ -89,12 +93,14 @@ function processRequest(req: http.IncomingMessage, res: http.ServerResponse): vo
                 serveAsset(req, res);
             } else if (req.url.startsWith("/api/games")) {
                 apiGetGames(req, res);
-            } else if (req.url.indexOf("/api/game") === 0) {
+            } else if (req.url.indexOf("/api/game?id=") === 0) {
                 apiGetGame(req, res);
+            } else if (gameLogs.canHandle(req.url)) {
+                gameLogs.handle(req, res);
             } else if (req.url.startsWith("/api/clonablegames")) {
                 getClonableGames(res);
             } else {
-                notFound(req, res);
+                route.notFound(req, res);
             }
         } else if (req.method === "PUT" && req.url.indexOf("/game") === 0) {
             createGame(req, res);
@@ -109,20 +115,20 @@ function processRequest(req: http.IncomingMessage, res: http.ServerResponse): vo
             );
             const game = playersToGame.get(playerId);
             if (game === undefined) {
-                notFound(req, res);
+                route.notFound(req, res);
                 return;
             }
             const player = game.getPlayers().find((p) => p.id === playerId);
             if (player === undefined) {
-                notFound(req, res);
+                route.notFound(req, res);
                 return;
             }
             processInput(req, res, player, game);
         } else {
-            notFound(req, res);
+            route.notFound(req, res);
         }
     } else {
-        notFound(req, res);
+        route.notFound(req, res);
     }
 }
 
@@ -133,7 +139,7 @@ function requestHandler(
     try {
         processRequest(req, res);
     } catch (error) {
-        internalServerError(res, error);
+        route.internalServerError(req, res, error);
     }
 }
 
@@ -219,12 +225,12 @@ function apiGetGames(
     res: http.ServerResponse
 ): void {
     if (!isServerIdValid(req)) {
-        notAuthorized(req, res);
+        route.notAuthorized(req, res);
         return;
     }
 
     if (games === undefined) {
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
 
@@ -270,7 +276,7 @@ function loadGame(req: http.IncomingMessage, res: http.ServerResponse): void {
             res.write(getGame(gameToRebuild));
             res.end();
         } catch (error) {
-            internalServerError(res, error);
+            route.internalServerError(req, res, error);
         }
     });
 }
@@ -308,13 +314,13 @@ function apiGetGame(req: http.IncomingMessage, res: http.ServerResponse): void {
 
     if (req.url === undefined) {
         console.warn("url not defined");
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
 
     if (!routeRegExp.test(req.url)) {
         console.warn("no match with regexp");
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
 
@@ -322,7 +328,7 @@ function apiGetGame(req: http.IncomingMessage, res: http.ServerResponse): void {
 
     if (matches === null || matches[1] === undefined) {
         console.warn("didn't find game id");
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
 
@@ -332,7 +338,7 @@ function apiGetGame(req: http.IncomingMessage, res: http.ServerResponse): void {
 
     if (game === undefined) {
         console.warn("game is undefined");
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
 
@@ -351,12 +357,12 @@ function apiGetWaitingFor(
     const prevGameAge = parseInt((queryParams as any)["prev-game-age"]);
     const game = playersToGame.get(playerId);
     if (game === undefined) {
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
     const player = game.getPlayers().find((player) => player.id === playerId);
     if (player === undefined) {
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
 
@@ -389,12 +395,12 @@ function apiGetPlayer(
     }
     const game = playersToGame.get(playerId);
     if (game === undefined) {
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
     const player = game.getPlayers().find((player) => player.id === playerId);
     if (player === undefined) {
-        notFound(req, res);
+        route.notFound(req, res);
         return;
     }
 
@@ -465,7 +471,7 @@ function createGame(req: http.IncomingMessage, res: http.ServerResponse): void {
             res.write(getGame(game));
             res.end();
         } catch (error) {
-            internalServerError(res, error);
+            route.internalServerError(req, res, error);
         }
     });
 }
@@ -585,7 +591,6 @@ function getPlayer(player: Player, game: Game): string {
         titaniumValue: player.getTitaniumValue(game),
         victoryPointsBreakdown: player.getVictoryPoints(game),
         waitingFor: getWaitingFor(player.getWaitingFor()),
-        gameLog: game.gameLog,
         isSoloModeWin: game.isSoloModeWin(),
         gameAge: game.gameAge,
         isActive: player.id === game.activePlayer,
@@ -968,32 +973,6 @@ function getGame(game: Game): string {
     return JSON.stringify(output);
 }
 
-function internalServerError(res: http.ServerResponse, err: unknown): void {
-    console.warn("internal server error", err);
-    res.writeHead(500);
-    res.write("Internal server error " + err);
-    res.end();
-}
-
-function notFound(req: http.IncomingMessage, res: http.ServerResponse): void {
-    if (!process.argv.includes("hide-not-found-warnings")) {
-        console.warn("Not found", req.method, req.url);
-    }
-    res.writeHead(404);
-    res.write("Not found");
-    res.end();
-}
-
-function notAuthorized(
-    req: http.IncomingMessage,
-    res: http.ServerResponse
-): void {
-    console.warn("Not authorized", req.method, req.url);
-    res.writeHead(403);
-    res.write("Not authorized");
-    res.end();
-}
-
 function isServerIdValid(req: http.IncomingMessage): boolean {
     const queryParams = querystring.parse(req.url!.replace(/^.*\?/, ""));
     if (
@@ -1031,7 +1010,7 @@ function serveAsset(req: http.IncomingMessage, res: http.ServerResponse): void {
 
         // Disallow to go outside of assets directory
         if (!reqFile.startsWith(assetsRoot) || !fs.existsSync(reqFile)) {
-            return notFound(req, res);
+            return route.notFound(req, res);
         }
         res.setHeader("Content-Type", "image/png");
         res.write(fs.readFileSync(reqFile));
@@ -1041,7 +1020,7 @@ function serveAsset(req: http.IncomingMessage, res: http.ServerResponse): void {
 
         // Disallow to go outside of assets directory
         if (!reqFile.startsWith(assetsRoot) || !fs.existsSync(reqFile)) {
-            return notFound(req, res);
+            return route.notFound(req, res);
         }
         res.setHeader("Content-Type", "image/jpeg");
         res.write(fs.readFileSync(reqFile));

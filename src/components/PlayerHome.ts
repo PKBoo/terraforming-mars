@@ -136,12 +136,12 @@ export const PlayerHome = Vue.component("player-home", {
                 
                 <players-overview class="player_home_block player_home_block--players nofloat:" :player="player" v-trim-whitespace />
                  
-                <div class="player_home_block player_home_block--log player_home_block--hide_log nofloat" v-if="player.gameLog.length > 0">
+                <div class="player_home_block player_home_block--log player_home_block--hide_log nofloat">
                     <h2 :class="'player_color_'+ player.color">
                         <span v-i18n>Game log</span>
                         <span class="label-additional" v-html="getGenerationText()"></span>
                     </h2>
-                    <log-panel :messages="player.gameLog" :players="player.players"></log-panel>
+                    <log-panel :id="player.id" :players="player.players"></log-panel>
                 </div>
 
                 <div class="player_home_block player_home_block--actions nofloat">
